@@ -1,5 +1,5 @@
-
-from orm import Model, StringField, IntegerField
+import logging; logging.basicConfig(level=logging.INFO)
+import aiomysql
 
 async def create_pool(loop, **kw):
     logging.info('create database connection pool...')
@@ -19,7 +19,7 @@ async def create_pool(loop, **kw):
 
 
 async def select(sql, args, size=None):
-    log(sql, args)
+    logging.info(sql, args)
     global __pool
     with (await __pool) as conn:
         cur = await conn.cursor(aiomysql.DictCursor)
@@ -33,7 +33,7 @@ async def select(sql, args, size=None):
         return rs
 
 async def execute(sql, args):
-    log(sql)
+    logging.info(sql)
     with (await __pool) as conn:
         try:
             cur = await conn.cursor()
@@ -56,12 +56,38 @@ class Field(object):
 
     def __str__(self):
         return '<%s, %s:%s>' % (self.__class__.__name__, self.column_type, self.name)
-		
+	
 class StringField(Field):
 
     def __init__(self, name=None, primary_key=False, default=None, ddl='varchar(100)'):
         super().__init__(name, ddl, primary_key, default)
 
+class BooleanField(Field):
+
+    def __init__(self, name=None, default=False):
+        super().__init__(name, 'boolean', False, default)
+
+class IntegerField(Field):
+
+    def __init__(self, name=None, primary_key=False, default=0):
+        super().__init__(name, 'bigint', primary_key, default)
+
+class FloatField(Field):
+
+    def __init__(self, name=None, primary_key=False, default=0.0):
+        super().__init__(name, 'real', primary_key, default)
+
+class TextField(Field):
+
+    def __init__(self, name=None, default=None):
+        super().__init__(name, 'text', False, default)
+
+def create_args_string(num):
+    L = []
+    for n in range(num):
+        L.append('?')
+    return ', '.join(L)
+    
 class ModelMetaclass(type):
 
     def __new__(cls, name, bases, attrs):
@@ -139,8 +165,8 @@ class Model(dict, metaclass=ModelMetaclass):
         return cls(**rs[0])
 		
     @classmethod
-	async def findall(cls ,where =None ,args = None,**kw):
-	    ''
+    async def findAll(cls ,where =None ,args = None,**kw):
+        ''
         sql=[cls.__select__]
         if where :
             sql.append('where')
