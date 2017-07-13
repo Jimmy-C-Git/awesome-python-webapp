@@ -17,6 +17,7 @@ from apis import *
 
 COOKIE_NAME = 'awesession'
 _COOKIE_KEY = configs.session.secret
+USER_AGE=configs.session.userage
 
 _RE_EMAIL = re.compile(r'^[a-z0-9\.\-\_]+\@[a-z0-9\-\_]+(\.[a-z0-9\-\_]+){1,4}$')
 _RE_SHA1 = re.compile(r'^[0-9a-f]{40}$') 
@@ -24,6 +25,15 @@ _RE_SHA1 = re.compile(r'^[0-9a-f]{40}$')
 def check_admin(request):
     pass
     
+def get_page_index(page_str):
+    p = 1
+    try:
+        p = int(page_str)
+    except ValueError as e:
+        pass
+    if p < 1:
+        p = 1
+    return p
     
 def user2cookie(user, max_age):
     '''
@@ -63,22 +73,22 @@ def cookie2user(cookie_str):
         logging.exception(e)
         return None
 
- 
+
  
 @get('/')
-def index(request):
-    summary = 'Lorem ipsum dolor sit amet, consectetur adipisicing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.'
-    blogs = [
-        Blog(id='1', name='Test Blog', summary=summary, created_at=time.time()-120),
-        Blog(id='2', name='Something New', summary=summary, created_at=time.time()-3600),
-        Blog(id='3', name='Learn Swift', summary=summary, created_at=time.time()-7200)
-    ]
+async def index(request,*,page='1'):
+    page_index = get_page_index(page)
+    num = await Blog.findNumber('count(id)')
+    p = Page(num, page_index)
+    if num == 0:
+        return dict(page=p, blogs=())
+    blogs = await Blog.findAll(orderBy='created_at desc',limit=(p.offset, p.limit))
     response={
         '__template__': 'blogs.html',
-        'blogs': blogs
+        'blogs': blogs,
+        'page': p
     }
-    if request.__user__:
-        response['__user__']=request.__user__
+    
     return response
 
 @get('/register')
@@ -117,7 +127,7 @@ async def api_register_user(*,email,name,passwd):
     await user.save()
     # make session cookie:
     r = web.Response()
-    r.set_cookie(COOKIE_NAME, user2cookie(user, 60), max_age=60, httponly=True)
+    r.set_cookie(COOKIE_NAME, user2cookie(user, USER_AGE), max_age=USER_AGE, httponly=True)
     user.passwd = '******'
     r.content_type = 'application/json'
     r.body = json.dumps(user, ensure_ascii=False).encode('utf-8')
@@ -142,13 +152,68 @@ async def authenticate(*, email, passwd):
         raise APIValueError('passwd', 'Invalid password.')
     # authenticate ok, set cookie:
     r = web.Response()
-    r.set_cookie(COOKIE_NAME, user2cookie(user, 60), max_age=60, httponly=True)
+    r.set_cookie(COOKIE_NAME, user2cookie(user, USER_AGE), max_age=USER_AGE, httponly=True)
     user.passwd = '******'
     r.content_type = 'application/json'
     r.body = json.dumps(user, ensure_ascii=False).encode('utf-8')
     return r
     
-@post('/api/blogs')
+@get('/signout')
+def signout(request):
+    referer = request.headers.get('Referer')
+    r = web.HTTPFound(referer or '/')
+    r.set_cookie(COOKIE_NAME, '-deleted-', max_age=0, httponly=True)
+    logging.info('user signed out.')
+    return r
+
+@get('/blog/{id}')
+async def blog(*,id):
+    blog = await Blog.find(id)
+    return {
+        '__template__':'blog.html',
+        'blog':blog
+    }
+    
+    
+@get('/manage/blogs')
+def manage_blogs(*, page='1'):
+    return {
+        '__template__': 'manage_blogs.html',
+        'page_index': get_page_index(page)
+    }
+@get('/manage/blogs/create')
+def manage_blogs_create(request):
+    return {
+        '__template__':'manage_blog_edit.html',
+        'id':'',
+        'action':'/api/create_blog'
+    }
+    
+@get('/manage/blogs/edit')
+def manage_blogs_edit(request,* ,id):
+    return {
+        '__template__':'manage_blog_edit.html',
+        'id':id,
+        'action':'/api/change_blog'
+    }
+    
+@get('/api/blogs')
+async def api_blogs(*, page='1'):
+    page_index = get_page_index(page)
+    num = await Blog.findNumber('count(id)')
+    p = Page(num, page_index)
+    if num == 0:
+        return dict(page=p, blogs=())
+    blogs = await Blog.findAll(orderBy='created_at desc', limit=(p.offset, p.limit))
+    return dict(page=p, blogs=blogs)
+    
+@get('/api/blogs/{id}')
+async def api_get_blog(*, id):
+    blog = await Blog.find(id)
+    return blog
+    
+    
+@post('/api/create_blog')
 async def api_create_blog(request, *, name, summary, content):
     check_admin(request)
     if not name or not name.strip():
@@ -157,9 +222,32 @@ async def api_create_blog(request, *, name, summary, content):
         raise APIValueError('summary', 'summary cannot be empty.')
     if not content or not content.strip():
         raise APIValueError('content', 'content cannot be empty.')
+    
     blog = Blog(user_id=request.__user__.id, user_name=request.__user__.name, user_image=request.__user__.image, name=name.strip(), summary=summary.strip(), content=content.strip())
     await blog.save()
     return blog
+
+@post('/api/change_blog')
+async def api_change_blog(request, *,id, name, summary, content):
+    check_admin(request)
+    if not id or not id.strip():
+        raise APIValueError('id','id cannot be empty.')
+    if not name or not name.strip():
+        raise APIValueError('name', 'name cannot be empty.')
+    if not summary or not summary.strip():
+        raise APIValueError('summary', 'summary cannot be empty.')
+    if not content or not content.strip():
+        raise APIValueError('content', 'content cannot be empty.')
+    
+    blog = await Blog.find(id)
+    blog.name=name
+    blog.summary=summary
+    blog.content=content
+    await blog.update()
+    return blog
+    
+
+    
 '''
 @get('/')
 async def index(request):
